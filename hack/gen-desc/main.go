@@ -86,6 +86,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	//nolint:gosec // generated Go source file, not sensitive data
 	if err := os.WriteFile("cmd/frp-manager/descriptions_gen.go", formatted, 0o644); err != nil {
 		panic(err)
 	}

@@ -73,15 +73,16 @@ func loadManagerConfig(path string) (*ManagerConfig, error) {
 	cfg := defaultManagerConfig()
 
 	data, err := os.ReadFile(path)
-	if err == nil {
+	switch {
+	case err == nil:
 		if err := toml.Unmarshal(data, &cfg); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
-	} else if os.IsNotExist(err) {
+	case os.IsNotExist(err):
 		if err := saveManagerConfig(path, &cfg); err != nil {
 			return nil, err
 		}
-	} else {
+	default:
 		return nil, err
 	}
 

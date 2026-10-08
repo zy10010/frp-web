@@ -156,6 +156,24 @@ func extractRelease(archive, dstDir string) error {
 	return extractTarGz(archive, dstDir)
 }
 
+// maxExtractedFileSize caps the size of any single file extracted from the
+// release archive, guarding against decompression bombs.
+const maxExtractedFileSize = 1 << 30 // 1 GiB
+
+// safeExtractTarget joins dstDir and name, rejecting any path that would escape
+// dstDir (e.g. via "../" in a malicious archive).
+func safeExtractTarget(dstDir, name string) (string, error) {
+	target := filepath.Join(dstDir, name)
+	rel, err := filepath.Rel(dstDir, target)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("illegal path in archive: %s", name)
+	}
+	return target, nil
+}
+
 func extractTarGz(archive, dstDir string) error {
 	f, err := os.Open(archive)
 	if err != nil {
@@ -176,9 +194,9 @@ func extractTarGz(archive, dstDir string) error {
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(dstDir, hdr.Name)
-		if !strings.HasPrefix(target, filepath.Clean(dstDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal path in archive: %s", hdr.Name)
+		target, err := safeExtractTarget(dstDir, hdr.Name)
+		if err != nil {
+			return err
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
@@ -193,11 +211,18 @@ func extractTarGz(archive, dstDir string) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(out, tr); err != nil {
+			written, err := io.Copy(out, io.LimitReader(tr, maxExtractedFileSize+1))
+			if err != nil {
 				out.Close()
 				return err
 			}
-			out.Close()
+			if written > maxExtractedFileSize {
+				out.Close()
+				return fmt.Errorf("file too large in archive: %s", hdr.Name)
+			}
+			if err := out.Close(); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -210,9 +235,9 @@ func extractZip(archive, dstDir string) error {
 	}
 	defer zr.Close()
 	for _, zf := range zr.File {
-		target := filepath.Join(dstDir, zf.Name)
-		if !strings.HasPrefix(target, filepath.Clean(dstDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal path in archive: %s", zf.Name)
+		target, err := safeExtractTarget(dstDir, zf.Name)
+		if err != nil {
+			return err
 		}
 		if zf.FileInfo().IsDir() {
 			if err := os.MkdirAll(target, 0o755); err != nil {
@@ -232,12 +257,21 @@ func extractZip(archive, dstDir string) error {
 			src.Close()
 			return err
 		}
-		if _, err := io.Copy(out, src); err != nil {
+		written, err := io.Copy(out, io.LimitReader(src, maxExtractedFileSize+1))
+		if err != nil {
 			out.Close()
 			src.Close()
 			return err
 		}
-		out.Close()
+		if written > maxExtractedFileSize {
+			out.Close()
+			src.Close()
+			return fmt.Errorf("file too large in archive: %s", zf.Name)
+		}
+		if err := out.Close(); err != nil {
+			src.Close()
+			return err
+		}
 		src.Close()
 	}
 	return nil
@@ -338,6 +372,8 @@ func replaceBinary(src, dst string) error {
 	if err != nil {
 		return err
 	}
+	// 0755 is required: this writes the frps/frpc executable binary.
+	//nolint:gosec
 	if err := os.WriteFile(dst, data, 0o755); err != nil {
 		_ = os.Rename(bak, dst) // restore on failure
 		return err

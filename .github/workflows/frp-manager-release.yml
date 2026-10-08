@@ -17,7 +17,7 @@ permissions:
 jobs:
   build:
     name: build (${{ matrix.suffix }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -115,7 +115,7 @@ jobs:
   release:
     name: publish GitHub release
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Download artifacts

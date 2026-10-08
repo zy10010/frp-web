@@ -87,16 +87,17 @@ func isSecret(key string) bool {
 }
 
 func isPluginStruct(t reflect.Type) (pluginKind string, ok bool) {
-	if t == reflect.TypeOf(v1.TypedClientPluginOptions{}) {
+	if t == reflect.TypeFor[v1.TypedClientPluginOptions]() {
 		return "client", true
 	}
-	if t == reflect.TypeOf(v1.TypedVisitorPluginOptions{}) {
+	if t == reflect.TypeFor[v1.TypedVisitorPluginOptions]() {
 		return "visitor", true
 	}
 	return "", false
 }
 
 func kindForField(t reflect.Type, key string) FieldKind {
+	//nolint:govet // "reflect.Ptr should be inlined" is analyzer noise
 	if t.Kind() == reflect.Ptr {
 		elem := t.Elem()
 		if elem.Kind() == reflect.Bool {
@@ -123,7 +124,7 @@ func kindForField(t reflect.Type, key string) FieldKind {
 		if elem.Kind() == reflect.String {
 			return KindStringList
 		}
-		if elem == reflect.TypeOf(types.PortsRange{}) {
+		if elem == reflect.TypeFor[types.PortsRange]() {
 			return KindPortsRange
 		}
 		return KindRaw
@@ -138,7 +139,7 @@ func kindForField(t reflect.Type, key string) FieldKind {
 		}
 		return KindRaw
 	case reflect.Struct:
-		if t == reflect.TypeOf(types.BandwidthQuantity{}) {
+		if t == reflect.TypeFor[types.BandwidthQuantity]() {
 			return KindBandwidth
 		}
 		if _, ok := isPluginStruct(t); ok {
@@ -235,6 +236,7 @@ func stringFieldOptions(parent reflect.Type, key, path string) []Option {
 // structs are flattened into the parent so that promoted fields appear at the
 // same level, matching the JSON representation.
 func buildGroup(t reflect.Type, path string) *Field {
+	//nolint:govet // "reflect.Ptr should be inlined" is analyzer noise
 	for t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
@@ -260,33 +262,27 @@ func buildGroup(t reflect.Type, path string) *Field {
 		if key == "version" {
 			continue
 		}
-		kind := kindForField(sf.Type, key)
 		f := &Field{
 			Key:         key,
 			Label:       humanize(sf.Name),
-			Kind:        kind,
+			Kind:        kindForField(sf.Type, key),
 			Description: fieldDescriptions[t.Name()+"."+sf.Name],
 		}
 		fp := joinPath(path, key)
-		if kind == KindSelect {
+
+		switch f.Kind {
+		case KindSelect:
 			f.Options = selectOptions(fp, sf.Type)
-		} else if kind == KindString {
+		case KindString:
 			// Promote plain string fields that have known allowed values into
 			// a dropdown so the UI can guide the user.
 			if opts := stringFieldOptions(t, key, fp); len(opts) > 0 {
-				kind = KindSelect
 				f.Kind = KindSelect
 				f.Options = opts
 			}
-		}
-		if kind == KindSelect && len(f.Options) == 0 {
-			kind = KindString
-			f.Kind = KindString
-		}
-		if kind == KindGroup {
+		case KindGroup:
 			f.Children = buildGroup(sf.Type, fp).Children
-		}
-		if kind == KindPlugin {
+		case KindPlugin:
 			if pluginKind, ok := isPluginStruct(sf.Type); ok {
 				f.PluginKind = pluginKind
 				if pluginKind == "visitor" {
@@ -295,6 +291,11 @@ func buildGroup(t reflect.Type, path string) *Field {
 					f.PluginTypes = clientPluginTypes
 				}
 			}
+		}
+
+		// A select without any allowed values is just a free-form string.
+		if f.Kind == KindSelect && len(f.Options) == 0 {
+			f.Kind = KindString
 		}
 		g.Children = append(g.Children, f)
 	}
@@ -317,7 +318,7 @@ func serverSchema() SchemaResponse {
 	cfg := &v1.ServerConfig{}
 	_ = cfg.Complete()
 	return SchemaResponse{
-		Schema:   buildGroup(reflect.TypeOf(v1.ServerConfig{}), ""),
+		Schema:   buildGroup(reflect.TypeFor[v1.ServerConfig](), ""),
 		Defaults: jsonDefault(cfg),
 	}
 }
@@ -326,7 +327,7 @@ func clientCommonSchema() SchemaResponse {
 	cfg := &v1.ClientCommonConfig{}
 	_ = cfg.Complete()
 	return SchemaResponse{
-		Schema:   buildGroup(reflect.TypeOf(v1.ClientCommonConfig{}), ""),
+		Schema:   buildGroup(reflect.TypeFor[v1.ClientCommonConfig](), ""),
 		Defaults: jsonDefault(cfg),
 	}
 }
@@ -365,7 +366,7 @@ func clientPluginSchema(pluginType string) SchemaResponse {
 	if err != nil || tc.ClientPluginOptions == nil {
 		return emptySchema()
 	}
-	tc.ClientPluginOptions.Complete()
+	tc.Complete()
 	return SchemaResponse{
 		Schema:   buildGroup(reflect.TypeOf(tc.ClientPluginOptions).Elem(), ""),
 		Defaults: jsonDefault(tc.ClientPluginOptions),
@@ -378,15 +379,12 @@ func visitorPluginSchema(pluginType string) SchemaResponse {
 	if err != nil || tc.VisitorPluginOptions == nil {
 		return emptySchema()
 	}
-	tc.VisitorPluginOptions.Complete()
+	tc.Complete()
 	return SchemaResponse{
 		Schema:   buildGroup(reflect.TypeOf(tc.VisitorPluginOptions).Elem(), ""),
 		Defaults: jsonDefault(tc.VisitorPluginOptions),
 	}
 }
-
-var proxyTypes = []string{"tcp", "udp", "http", "https", "tcpmux", "stcp", "xtcp", "sudp"}
-var visitorTypes = []string{"stcp", "xtcp", "sudp"}
 
 var clientPluginTypes = []string{
 	v1.PluginHTTP2HTTPS,

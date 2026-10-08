@@ -150,6 +150,9 @@ func (m *Manager) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tok := m.sessions.create()
+	// The manager serves plain HTTP (no TLS), so Secure must be false here;
+	// if you terminate TLS at a reverse proxy, set Secure=true behind it.
+	//nolint:gosec // Secure is intentionally false for the HTTP-only panel
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Value:    tok,

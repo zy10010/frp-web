@@ -50,13 +50,33 @@ The tarball is written to `release/frp-manager-<version>-<os>-<arch>.tar.gz` and
 contains `frp-manager`, `install.sh` and `install-alpine.sh` (and `frps`/`frpc`
 when `--bundle-frp` is used).
 
-### Build in GitHub Actions (no server needed)
+### Build & sync in GitHub Actions (no server needed)
 
-You don't need your own build server. Go cross-compiles, so GitHub Actions can
-build the release for every platform. A ready-to-use workflow is included at
-`.github/workflows/release.yml`: push a `v*` tag (or run it manually) and it
-builds `frp-manager` + `frps`/`frpc` for all Linux architectures, macOS and
-Windows, then publishes the tarballs as a GitHub Release.
+You don't need your own build server. Go cross-compiles, so GitHub Actions does
+everything. Three workflows are included under `.github/workflows/`:
+
+- `frp-manager-ci.yml` — on push/PR: regenerates derived assets and checks for
+  drift, `go vet`, builds all binaries, checks the web JS, runs config tests.
+- `frp-manager-sync.yml` — on a daily schedule (or manually): merges
+  `upstream` (`fatedier/frp` `dev` branch) into your repo, regenerates the web
+  schema descriptions, pushes, and verifies the build. Because frp-manager only
+  adds a web layer on top of upstream, the rest of the code always tracks the
+  original project.
+- `frp-manager-release.yml` — builds `frp-manager` + `frps`/`frpc` for all Linux
+  architectures, macOS and Windows, then publishes a GitHub Release.
+
+### Automatic releases on upstream updates
+
+Set a repository secret `SYNC_TOKEN` to a Personal Access Token (PAT) with
+`contents: write` scope. When `frp-manager-sync.yml` detects a **new upstream
+release**, it merges upstream, regenerates assets, pushes, and then tags
+`frp-manager-v<upstream-version>` (e.g. `frp-manager-v0.72.0`). That tag triggers
+`frp-manager-release.yml`, which builds and publishes the matching release. The
+version number mirrors the upstream frp version it wraps.
+
+Without `SYNC_TOKEN`, the sync workflow still merges upstream and regenerates
+assets, but pushes made with the default `GITHUB_TOKEN` do not trigger the
+release workflow — you can then push a `frp-manager-v*` tag manually to release.
 
 ## Install
 

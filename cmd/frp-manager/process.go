@@ -16,11 +16,11 @@ type ringBuffer struct {
 	max  int
 }
 
-func newRingBuffer(max int) *ringBuffer {
-	if max <= 0 {
-		max = 256 * 1024
+func newRingBuffer(limit int) *ringBuffer {
+	if limit <= 0 {
+		limit = 256 * 1024
 	}
-	return &ringBuffer{max: max}
+	return &ringBuffer{max: limit}
 }
 
 func (r *ringBuffer) Write(p []byte) (int, error) {

@@ -12,7 +12,7 @@ permissions:
 jobs:
   sync:
     name: sync with upstream frp
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -36,41 +36,67 @@ jobs:
       - name: Fetch upstream
         run: |
           git remote add upstream https://github.com/fatedier/frp.git || true
-          git fetch upstream dev --tags
+          git fetch upstream '+refs/heads/dev:refs/remotes/upstream/dev'
 
-      - name: Check for upstream commits
-        id: check
+      - name: Sync with upstream
+        id: sync
         run: |
-          if git merge-base --is-ancestor upstream/dev HEAD; then
-            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
-            echo "Already up to date with upstream."
-          else
-            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
-            echo "Upstream has new commits to merge."
+          if [ "$(git rev-parse HEAD)" = "$(git rev-parse upstream/dev)" ]; then
+            echo "No upstream changes."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-      - name: Merge upstream
-        if: steps.check.outputs.up_to_date == 'false'
-        run: git merge upstream/dev --no-edit
+          if git merge-base HEAD upstream/dev >/dev/null 2>&1; then
+            # Related histories (a true fork): merge normally.
+            git merge upstream/dev --no-edit
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "force=" >> "$GITHUB_OUTPUT"
+          else
+            # Unrelated histories (a fresh repo, not a fork): rebuild dev from
+            # upstream plus our additive files.
+            echo "Rebuilding dev on top of upstream (unrelated histories)."
+            OUR_PATHS="cmd/frp-manager hack/gen-desc hack/sync-assets.sh packaging \
+              .github/workflows/frp-manager-ci.yml \
+              .github/workflows/frp-manager-release.yml \
+              .github/workflows/frp-manager-sync.yml"
+            TMP="$(mktemp -d)"
+            for p in $OUR_PATHS; do
+              if [ -e "$p" ]; then
+                mkdir -p "$TMP/$(dirname "$p")"
+                cp -a "$p" "$TMP/$(dirname "$p")/"
+              fi
+            done
+            git checkout -B dev upstream/dev
+            for p in $OUR_PATHS; do
+              if [ -e "$TMP/$p" ]; then
+                mkdir -p "$(dirname "$p")"
+                cp -a "$TMP/$p" "$(dirname "$p")/"
+              fi
+            done
+            rm -rf "$TMP"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "force=--force" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Regenerate assets
-        if: steps.check.outputs.up_to_date == 'false'
+        if: steps.sync.outputs.changed == 'true'
         run: bash hack/sync-assets.sh
 
-      - name: Commit generated assets
-        if: steps.check.outputs.up_to_date == 'false'
+      - name: Commit changes
+        if: steps.sync.outputs.changed == 'true'
         run: |
-          git add cmd/frp-manager/descriptions_gen.go cmd/frp-manager/examples/
+          git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "chore: sync generated assets with upstream"
+            git commit -m "chore: sync with upstream frp"
           fi
 
       - name: Push dev
-        if: steps.check.outputs.up_to_date == 'false'
-        run: git push origin dev
+        if: steps.sync.outputs.changed == 'true'
+        run: git push origin dev ${{ steps.sync.outputs.force }}
 
       - name: Verify build after sync
-        if: steps.check.outputs.up_to_date == 'false'
+        if: steps.sync.outputs.changed == 'true'
         run: |
           go vet ./cmd/frp-manager/
           go build -o /tmp/frp-manager ./cmd/frp-manager
