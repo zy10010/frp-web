@@ -1,13 +1,13 @@
-name: release
+name: frp-manager-release
 
 on:
   push:
     tags:
-      - 'v*'
+      - 'frp-manager-v*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'frp-manager version (e.g. 1.0.0)'
+        description: 'frp-manager version (e.g. 0.71.0)'
         required: false
         default: ''
 
@@ -22,27 +22,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: linux,   arch: amd64,   suffix: linux_amd64,   ext: tar.gz }
-          - { os: linux,   arch: arm64,   suffix: linux_arm64,   ext: tar.gz }
-          - { os: linux,   arch: arm,     goarm: '7', suffix: linux_arm_hf, ext: tar.gz }
-          - { os: linux,   arch: arm,     goarm: '5', suffix: linux_arm,   ext: tar.gz }
-          - { os: linux,   arch: mips,    gomips: softfloat, suffix: linux_mips, ext: tar.gz }
-          - { os: linux,   arch: mipsle,  gomips: softfloat, suffix: linux_mipsle, ext: tar.gz }
-          - { os: linux,   arch: mips64,  suffix: linux_mips64,  ext: tar.gz }
+          - { os: linux,   arch: amd64,    suffix: linux_amd64,    ext: tar.gz }
+          - { os: linux,   arch: arm64,    suffix: linux_arm64,    ext: tar.gz }
+          - { os: linux,   arch: arm,      goarm: '7', suffix: linux_arm_hf, ext: tar.gz }
+          - { os: linux,   arch: arm,      goarm: '5', suffix: linux_arm,   ext: tar.gz }
+          - { os: linux,   arch: mips,     gomips: softfloat, suffix: linux_mips, ext: tar.gz }
+          - { os: linux,   arch: mipsle,   gomips: softfloat, suffix: linux_mipsle, ext: tar.gz }
+          - { os: linux,   arch: mips64,   suffix: linux_mips64,   ext: tar.gz }
           - { os: linux,   arch: mips64le, suffix: linux_mips64le, ext: tar.gz }
-          - { os: linux,   arch: riscv64, suffix: linux_riscv64, ext: tar.gz }
-          - { os: linux,   arch: loong64, suffix: linux_loong64, ext: tar.gz }
-          - { os: darwin,  arch: amd64,   suffix: darwin_amd64,  ext: tar.gz }
-          - { os: darwin,  arch: arm64,   suffix: darwin_arm64,  ext: tar.gz }
-          - { os: windows, arch: amd64,   suffix: windows_amd64, ext: zip }
-          - { os: windows, arch: arm64,   suffix: windows_arm64, ext: zip }
+          - { os: linux,   arch: riscv64,  suffix: linux_riscv64,  ext: tar.gz }
+          - { os: linux,   arch: loong64,  suffix: linux_loong64,  ext: tar.gz }
+          - { os: darwin,  arch: amd64,    suffix: darwin_amd64,   ext: tar.gz }
+          - { os: darwin,  arch: arm64,    suffix: darwin_arm64,   ext: tar.gz }
+          - { os: windows, arch: amd64,    suffix: windows_amd64,  ext: zip }
+          - { os: windows, arch: arm64,    suffix: windows_arm64,  ext: zip }
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.25.x'
 
@@ -52,7 +52,7 @@ jobs:
           if [ -n "${{ github.event.inputs.version }}" ]; then
             V="${{ github.event.inputs.version }}"
           else
-            V="${GITHUB_REF_NAME#v}"
+            V="${GITHUB_REF_NAME#frp-manager-v}"
             [ -n "$V" ] || V="1.0.0"
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
@@ -65,9 +65,11 @@ jobs:
           GOMIPS: ${{ matrix.gomips }}
         run: |
           mkdir -p dist
+          EXT=""
+          [ "${{ matrix.os }}" = "windows" ] && EXT=".exe"
           CGO_ENABLED=0 go build -trimpath \
             -ldflags "-s -w -X main.managerVersion=${{ steps.version.outputs.version }}" \
-            -o dist/frp-manager ./cmd/frp-manager
+            -o "dist/frp-manager${EXT}" ./cmd/frp-manager
 
       - name: Build frps/frpc (no embedded dashboard)
         env:
@@ -76,8 +78,10 @@ jobs:
           GOARM: ${{ matrix.goarm }}
           GOMIPS: ${{ matrix.gomips }}
         run: |
-          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -tags noweb -o dist/frps ./cmd/frps
-          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -tags noweb -o dist/frpc ./cmd/frpc
+          EXT=""
+          [ "${{ matrix.os }}" = "windows" ] && EXT=".exe"
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -tags noweb -o "dist/frps${EXT}" ./cmd/frps
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -tags noweb -o "dist/frpc${EXT}" ./cmd/frpc
 
       - name: Add install scripts (linux/macOS)
         if: matrix.os != 'windows'
@@ -101,7 +105,7 @@ jobs:
             frp-manager.exe frps.exe frpc.exe
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: frp-manager-${{ matrix.suffix }}
           path: |
@@ -115,13 +119,16 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: release
           merge-multiple: true
 
-      - name: Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release/**
-          generate_release_notes: true
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            release/*.tar.gz release/*.zip \
+            --generate-notes \
+            --title "$GITHUB_REF_NAME"

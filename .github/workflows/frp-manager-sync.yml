@@ -15,13 +15,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: dev
           fetch-depth: 0
+          # Use SYNC_TOKEN (a PAT) when available so that pushes made below also
+          # trigger the frp-manager-release workflow. Falls back to GITHUB_TOKEN.
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.25.x'
 
@@ -35,7 +38,7 @@ jobs:
           git remote add upstream https://github.com/fatedier/frp.git || true
           git fetch upstream dev --tags
 
-      - name: Check for upstream updates
+      - name: Check for upstream commits
         id: check
         run: |
           if git merge-base --is-ancestor upstream/dev HEAD; then
@@ -62,7 +65,7 @@ jobs:
             git commit -m "chore: sync generated assets with upstream"
           fi
 
-      - name: Push
+      - name: Push dev
         if: steps.check.outputs.up_to_date == 'false'
         run: git push origin dev
 
@@ -73,3 +76,36 @@ jobs:
           go build -o /tmp/frp-manager ./cmd/frp-manager
           go build -tags noweb -o /tmp/frps ./cmd/frps
           go build -tags noweb -o /tmp/frpc ./cmd/frpc
+
+      - name: Check for new upstream release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LATEST="$(gh api repos/fatedier/frp/releases/latest --jq .tag_name 2>/dev/null || true)"
+          case "$LATEST" in
+            v*) ;;
+            *)
+              echo "Could not determine latest upstream release (got: '$LATEST'); skipping auto-release."
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              echo "tag=" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+          V="${LATEST#v}"
+          OUR_TAG="frp-manager-v${V}"
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "tag=$OUR_TAG" >> "$GITHUB_OUTPUT"
+          if git ls-remote --tags origin "$OUR_TAG" | grep -q "$OUR_TAG"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release tag $OUR_TAG already exists."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "New upstream release $LATEST -> will publish $OUR_TAG."
+          fi
+
+      - name: Create and push release tag
+        if: steps.release.outputs.exists == 'false'
+        run: |
+          git tag "${{ steps.release.outputs.tag }}"
+          git push origin "${{ steps.release.outputs.tag }}"
