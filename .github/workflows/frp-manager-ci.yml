@@ -1,0 +1,44 @@
+name: frp-manager-ci
+
+on:
+  push:
+    branches: ['dev']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: build & test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+
+      - name: Regenerate assets and check for drift
+        run: |
+          bash hack/sync-assets.sh
+          git diff --exit-code cmd/frp-manager/descriptions_gen.go cmd/frp-manager/examples/
+
+      - name: Vet
+        run: go vet ./cmd/frp-manager/
+
+      - name: Build frp-manager
+        run: go build -o /tmp/frp-manager ./cmd/frp-manager
+
+      - name: Build frps/frpc (no embedded dashboard)
+        run: |
+          go build -tags noweb -o /tmp/frps ./cmd/frps
+          go build -tags noweb -o /tmp/frpc ./cmd/frpc
+
+      - name: Check web JS syntax
+        run: node --check cmd/frp-manager/web/app.js
+
+      - name: Run frp config tests (sanity)
+        run: go test ./pkg/config/...
