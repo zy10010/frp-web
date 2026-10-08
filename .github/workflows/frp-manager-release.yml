@@ -1,0 +1,127 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'frp-manager version (e.g. 1.0.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.suffix }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: linux,   arch: amd64,   suffix: linux_amd64,   ext: tar.gz }
+          - { os: linux,   arch: arm64,   suffix: linux_arm64,   ext: tar.gz }
+          - { os: linux,   arch: arm,     goarm: '7', suffix: linux_arm_hf, ext: tar.gz }
+          - { os: linux,   arch: arm,     goarm: '5', suffix: linux_arm,   ext: tar.gz }
+          - { os: linux,   arch: mips,    gomips: softfloat, suffix: linux_mips, ext: tar.gz }
+          - { os: linux,   arch: mipsle,  gomips: softfloat, suffix: linux_mipsle, ext: tar.gz }
+          - { os: linux,   arch: mips64,  suffix: linux_mips64,  ext: tar.gz }
+          - { os: linux,   arch: mips64le, suffix: linux_mips64le, ext: tar.gz }
+          - { os: linux,   arch: riscv64, suffix: linux_riscv64, ext: tar.gz }
+          - { os: linux,   arch: loong64, suffix: linux_loong64, ext: tar.gz }
+          - { os: darwin,  arch: amd64,   suffix: darwin_amd64,  ext: tar.gz }
+          - { os: darwin,  arch: arm64,   suffix: darwin_arm64,  ext: tar.gz }
+          - { os: windows, arch: amd64,   suffix: windows_amd64, ext: zip }
+          - { os: windows, arch: arm64,   suffix: windows_arm64, ext: zip }
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            V="${{ github.event.inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"
+            [ -n "$V" ] || V="1.0.0"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Build frp-manager
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          GOARM: ${{ matrix.goarm }}
+          GOMIPS: ${{ matrix.gomips }}
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-s -w -X main.managerVersion=${{ steps.version.outputs.version }}" \
+            -o dist/frp-manager ./cmd/frp-manager
+
+      - name: Build frps/frpc (no embedded dashboard)
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          GOARM: ${{ matrix.goarm }}
+          GOMIPS: ${{ matrix.gomips }}
+        run: |
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -tags noweb -o dist/frps ./cmd/frps
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -tags noweb -o dist/frpc ./cmd/frpc
+
+      - name: Add install scripts (linux/macOS)
+        if: matrix.os != 'windows'
+        run: |
+          cp packaging/install.sh dist/
+          cp packaging/install-alpine.sh dist/
+          cp packaging/README.md dist/
+
+      - name: Package (tar.gz)
+        if: matrix.ext == 'tar.gz'
+        run: |
+          cd dist
+          tar -czf "frp-manager-${{ steps.version.outputs.version }}-${{ matrix.suffix }}.tar.gz" \
+            frp-manager frps frpc install.sh install-alpine.sh README.md
+
+      - name: Package (zip)
+        if: matrix.ext == 'zip'
+        run: |
+          cd dist
+          zip -q "frp-manager-${{ steps.version.outputs.version }}-${{ matrix.suffix }}.zip" \
+            frp-manager.exe frps.exe frpc.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frp-manager-${{ matrix.suffix }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+
+  release:
+    name: publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/**
+          generate_release_notes: true

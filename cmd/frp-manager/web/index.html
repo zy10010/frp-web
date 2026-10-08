@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>frp-manager</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Login -->
+  <div id="login" class="login hidden">
+    <form id="login-form" class="login-card">
+      <h1>frp-manager</h1>
+      <p class="muted">Sign in to manage your frp server and client</p>
+      <label>Username
+        <input id="login-user" type="text" autocomplete="username" />
+      </label>
+      <label>Password
+        <input id="login-pass" type="password" autocomplete="current-password" />
+      </label>
+      <div id="login-error" class="error hidden"></div>
+      <button type="submit" class="primary">Sign in</button>
+    </form>
+  </div>
+
+  <!-- App -->
+  <div id="app" class="app hidden">
+    <aside class="sidebar">
+      <div class="brand">frp-manager</div>
+      <nav id="nav">
+        <button data-page="dashboard" class="active">Dashboard</button>
+        <button data-page="server">Server (frps)</button>
+        <button data-page="client">Client (frpc)</button>
+        <button data-page="update">Updates</button>
+        <button data-page="settings">Settings</button>
+      </nav>
+      <div class="sidebar-footer">
+        <button id="logout" class="ghost">Sign out</button>
+      </div>
+    </aside>
+
+    <main class="content">
+      <section id="page-dashboard" class="page"></section>
+      <section id="page-server" class="page hidden"></section>
+      <section id="page-client" class="page hidden"></section>
+      <section id="page-update" class="page hidden"></section>
+      <section id="page-settings" class="page hidden"></section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>

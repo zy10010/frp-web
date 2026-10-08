@@ -1,0 +1,75 @@
+name: frp-manager-sync
+
+on:
+  schedule:
+    # Daily at 03:00 UTC. Adjust as needed.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: sync with upstream frp
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/fatedier/frp.git || true
+          git fetch upstream dev --tags
+
+      - name: Check for upstream updates
+        id: check
+        run: |
+          if git merge-base --is-ancestor upstream/dev HEAD; then
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+            echo "Already up to date with upstream."
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+            echo "Upstream has new commits to merge."
+          fi
+
+      - name: Merge upstream
+        if: steps.check.outputs.up_to_date == 'false'
+        run: git merge upstream/dev --no-edit
+
+      - name: Regenerate assets
+        if: steps.check.outputs.up_to_date == 'false'
+        run: bash hack/sync-assets.sh
+
+      - name: Commit generated assets
+        if: steps.check.outputs.up_to_date == 'false'
+        run: |
+          git add cmd/frp-manager/descriptions_gen.go cmd/frp-manager/examples/
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: sync generated assets with upstream"
+          fi
+
+      - name: Push
+        if: steps.check.outputs.up_to_date == 'false'
+        run: git push origin dev
+
+      - name: Verify build after sync
+        if: steps.check.outputs.up_to_date == 'false'
+        run: |
+          go vet ./cmd/frp-manager/
+          go build -o /tmp/frp-manager ./cmd/frp-manager
+          go build -tags noweb -o /tmp/frps ./cmd/frps
+          go build -tags noweb -o /tmp/frpc ./cmd/frpc
